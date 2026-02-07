@@ -1,5 +1,6 @@
 # DevOps-Platform
 
+```bash
 /DevOps-Platform
 ├── backend/                # FastAPI Application
 │   ├── app/
@@ -14,3 +15,4 @@
 │   │   ├── components/     # Reusable UI (Charts, Log Viewers)
 │   │   └── hooks/          # Custom WebSocket hooks for real-time logs
 └── docker-compose.yml      # Run the whole stack locally
+```

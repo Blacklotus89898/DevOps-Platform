@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from google import genai  # Use the new SDK
+from google import genai
 from dotenv import load_dotenv
 
 # 1. Load Environment Variables
@@ -16,7 +16,6 @@ if not API_KEY:
     st.stop()
 
 # 2. Initialize the New Client
-# The new SDK uses genai.Client() and handles models through client.models
 client = genai.Client(api_key=API_KEY)
 MODEL_ID = "gemini-2.5-flash"
 
@@ -24,13 +23,17 @@ MODEL_ID = "gemini-2.5-flash"
 with st.sidebar:
     st.header("Project Settings")
     project_type = st.selectbox("Project Type", ["Python/Flask", "Node.js", "Go", "Java/Spring", "C++ (CMake)"])
-    include_docker = st.checkbox("Dockerfile", value=True)
-    include_k8s = st.checkbox("Kubernetes Manifests", value=True)
-    include_terraform = st.checkbox("Terraform (EKS/VPC)", value=True)
-    include_actions = st.checkbox("GitHub Actions", value=True)
+    
+    # Store checkboxes in a dictionary for easy filtering
+    config_selection = {
+        "Dockerfile": st.checkbox("Dockerfile", value=True),
+        "Kubernetes": st.checkbox("Kubernetes Manifests", value=True),
+        "Terraform": st.checkbox("Terraform (EKS/VPC)", value=True),
+        "GitHub Actions": st.checkbox("GitHub Actions", value=True)
+    }
     
     st.divider()
-    st.info("SRE Tip: Always use multi-stage builds for smaller, more secure images.")
+    st.info("SRE Tip: Tabs will only be generated for the items checked above.")
 
 st.subheader("1. Project Directory Structure")
 tree_input = st.text_area("Paste your project tree here:", height=200, placeholder="""
@@ -41,50 +44,78 @@ my-app/
 └── README.md
 """)
 
-def generate_devops_files(tree, p_type, configs):
-    selected_configs = [c for c, v in configs.items() if v]
-    
+def generate_devops_files(tree, p_type, configs_to_gen):
+    """Only generates content for the checked items."""
     prompt = f"""
     Act as a Senior Site Reliability Engineer. 
     Analyze this directory structure: {tree}
-    
     This is a {p_type} project.
-    Generate production-grade configurations for: {', '.join(selected_configs)}.
+    
+    ONLY generate configurations for the following requested items: {', '.join(configs_to_gen)}.
+    Do not include any other files.
+    
+    Format the output as follows for each item:
+    ---START [ITEM_NAME]---
+    [Code Block]
+    ---END [ITEM_NAME]---
     
     Requirements:
-    - Docker: Multi-stage builds, non-root user, optimized caching.
-    - K8s: Deployment (with resource limits), Service, and HPA.
-    - Terraform: Use official AWS modules for VPC and EKS.
-    - GitHub Actions: Build and Push to ECR, then deploy to EKS.
-    
-    Output each file in a clear Markdown code block.
+    - Docker: Multi-stage, non-root user.
+    - K8s: Deployment (with limits), Service.
+    - Terraform: AWS EKS/VPC modules.
     """
     
-    # NEW SDK SYNTAX: client.models.generate_content
     response = client.models.generate_content(
         model=MODEL_ID,
         contents=prompt
     )
     return response.text
 
+def parse_output(text, requested_items):
+    """Parses the AI output to separate content by section."""
+    sections = {}
+    for item in requested_items:
+        start_marker = f"---START {item}---"
+        end_marker = f"---END {item}---"
+        if start_marker in text and end_marker in text:
+            content = text.split(start_marker)[1].split(end_marker)[0].strip()
+            sections[item] = content
+    return sections
+
 if st.button("🚀 Generate Scaffolding"):
+    # Filter to only checked items
+    active_configs = [name for name, checked in config_selection.items() if checked]
+    
     if not tree_input:
         st.error("Please provide a directory tree.")
+    elif not active_configs:
+        st.warning("Please select at least one configuration to generate.")
     else:
-        configs = {
-            "Dockerfile": include_docker,
-            "Kubernetes": include_k8s,
-            "Terraform": include_terraform,
-            "GitHub Actions": include_actions
-        }
-        
-        with st.spinner(f"Using {MODEL_ID} to architect your infrastructure..."):
+        with st.spinner(f"Architecting {len(active_configs)} components..."):
             try:
-                result = generate_devops_files(tree_input, project_type, configs)
-                st.success("Infrastructure generated successfully!")
+                raw_result = generate_devops_files(tree_input, project_type, active_configs)
+                parsed_content = parse_output(raw_result, active_configs)
                 
-                # Render the AI response
-                st.markdown(result)
+                if not parsed_content:
+                    st.error("AI failed to format the output correctly. Try again.")
+                    st.text(raw_result) # Fallback to raw text
+                else:
+                    st.success("Infrastructure generated!")
+                    
+                    # --- NAVIGATION TABS ---
+                    # This creates the navigation buttons you wanted
+                    tabs = st.tabs(active_configs)
+                    
+                    for i, tab_name in enumerate(active_configs):
+                        with tabs[i]:
+                            st.subheader(f"{tab_name} Configuration")
+                            st.markdown(parsed_content.get(tab_name, "No content generated for this section."))
+                            st.download_button(
+                                label=f"Download {tab_name}",
+                                data=parsed_content.get(tab_name, ""),
+                                file_name=f"{tab_name.lower().replace(' ', '_')}_config.txt",
+                                mime="text/plain"
+                            )
                 
             except Exception as e:
                 st.error(f"An error occurred: {e}")

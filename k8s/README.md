@@ -391,3 +391,236 @@ RBAC broken?
 → k auth can-i
 ```
 
+---
+
+# 🚀 **1. Production‑Grade Kubernetes Template Pack**
+This is a **full microservice bundle** you can drop into any cluster.  
+Everything is wired together: config, secrets, storage, autoscaling, networking.
+
+Each file is intentionally minimal but production‑grade.
+
+---
+
+## **📄 01-configmap.yaml**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: info
+  FEATURE_FLAG_X: "true"
+```
+
+---
+
+## **📄 02-secret.yaml**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+data:
+  DB_PASSWORD: cGFzc3dvcmQ=   # "password"
+```
+
+---
+
+## **📄 03-pvc.yaml**
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+```
+
+---
+
+## **📄 04-deployment.yaml**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      containers:
+        - name: app
+          image: your-registry/app:1.0.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: LOG_LEVEL
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/app
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: app-data
+```
+
+---
+
+## **📄 05-service.yaml**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+spec:
+  type: ClusterIP
+  selector:
+    app: app
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+---
+
+## **📄 06-ingress.yaml**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 80
+```
+
+---
+
+## **📄 07-hpa.yaml**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+---
+
+# 🧠 **2. Visual Map: How All Kubernetes YAML Objects Relate**
+
+Here’s the mental model senior engineers use — clean, layered, and intuitive.
+
+```
+                   ┌──────────────────────────────┐
+                   │          Ingress              │
+                   │   (External HTTP Routing)     │
+                   └──────────────┬───────────────┘
+                                  │
+                                  ▼
+                   ┌──────────────────────────────┐
+                   │            Service            │
+                   │   (Stable Virtual IP)         │
+                   └──────────────┬───────────────┘
+                                  │
+                                  ▼
+                   ┌──────────────────────────────┐
+                   │          Deployment           │
+                   │  (Manages ReplicaSets/Pods)   │
+                   └──────────────┬───────────────┘
+                                  │
+                                  ▼
+                   ┌──────────────────────────────┐
+                   │             Pods              │
+                   │  (Containers + Probes + Env) │
+                   └──────────────┬───────────────┘
+                                  │
+       ┌──────────────────────────┼──────────────────────────┐
+       ▼                          ▼                          ▼
+┌──────────────┐        ┌────────────────┐        ┌────────────────────┐
+│  ConfigMap   │        │    Secret      │        │        PVC          │
+│ (Env/config) │        │ (Sensitive env)│        │ (Persistent storage)│
+└──────────────┘        └────────────────┘        └────────────────────┘
+
+```
+
+And the autoscaler sits on the side:
+
+```
+        ┌──────────────────────────────┐
+        │              HPA             │
+        │ (Scales Deployment replicas) │
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+                Deployment
+```
+
+
